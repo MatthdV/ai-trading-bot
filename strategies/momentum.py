@@ -69,16 +69,16 @@ class MomentumStrategy(BaseStrategy):
         "ema_slow": 21,
         # ADX
         "adx_period": 14,
-        "adx_entry_threshold": 25.0,
-        "adx_exit_threshold": 20.0,
+        "adx_entry_threshold": 18.0,
+        "adx_exit_threshold": 14.0,
         # Volume
         "volume_avg_period": 20,
-        "volume_min_relative": 1.5,
+        "volume_min_relative": 1.0,
         # ATR trailing stop
         "atr_period": 14,
-        "atr_trailing_multiplier": 1.5,
+        "atr_trailing_multiplier": 2.5,
         # Sizing
-        "max_allocation_pct": 0.05,
+        "max_allocation_pct": 0.20,
         # Minimum candles
         "min_candles": 60,
         # Market hours filter (ET)

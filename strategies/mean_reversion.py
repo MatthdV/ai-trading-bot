@@ -42,26 +42,26 @@ class MeanReversionStrategy(BaseStrategy):
     CLASS_DEFAULTS: dict[str, Any] = {
         # RSI
         "rsi_period": 14,
-        "rsi_oversold": 30.0,
-        "rsi_overbought": 70.0,
+        "rsi_oversold": 35.0,
+        "rsi_overbought": 65.0,
         # Bollinger Bands
         "bb_period": 20,
-        "bb_std": 2.0,
+        "bb_std": 1.5,
         # Z-score
         "zscore_period": 20,
-        "zscore_entry_threshold": 2.0,
-        "zscore_exit_low": -0.5,
-        "zscore_exit_high": 0.5,
+        "zscore_entry_threshold": 1.5,
+        "zscore_exit_low": -0.2,
+        "zscore_exit_high": 0.2,
         # Risk
-        "stop_loss_pct": 0.02,
-        "timeout_hours": 48.0,
+        "stop_loss_pct": 0.05,
+        "timeout_hours": 168.0,
         # Sizing
-        "max_allocation_pct": 0.05,
+        "max_allocation_pct": 0.15,
         # Minimum candles required to compute all indicators
         "min_candles": 50,
         # Strength weights (RSI, Bollinger, Z-score)
-        "weight_rsi": 0.35,
-        "weight_bb": 0.35,
+        "weight_rsi": 0.40,
+        "weight_bb": 0.30,
         "weight_zscore": 0.30,
     }
 

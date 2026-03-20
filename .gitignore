@@ -1,0 +1,40 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+*.pid
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Freqtrade
+freqtrade_config/data/
+freqtrade_config/logs/
+freqtrade_config/backtest_results/
+freqtrade_config/hyperopt_results/
+freqtrade_config/*.pid
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Freqtrade databases
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Claude Code private memory
+.claude/

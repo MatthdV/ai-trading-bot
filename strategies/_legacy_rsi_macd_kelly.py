@@ -5,6 +5,7 @@ Mean reversion strategy with momentum confirmation
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -61,18 +62,23 @@ class RSIMACDKellyStrategy:
         logger.info(f"Strategy initialized with {len(self.symbols)} symbols")
     
     def generate_signals(self, alpaca_client) -> List[Signal]:
-        """Generate trading signals for all symbols"""
+        """Generate trading signals for all symbols (parallel fetching)"""
         signals = []
-        
-        for symbol in self.symbols:
-            try:
-                signal = self._analyze_symbol(symbol, alpaca_client)
-                if signal and signal.action != 'hold':
-                    signals.append(signal)
-            except Exception as e:
-                logger.error(f"Error analyzing {symbol}: {e}")
-                continue
-        
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(self._analyze_symbol, symbol, alpaca_client): symbol
+                for symbol in self.symbols
+            }
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    signal = future.result()
+                    if signal and signal.action != 'hold':
+                        signals.append(signal)
+                except Exception as e:
+                    logger.error(f"Error analyzing {symbol}: {e}")
+
         return signals
     
     def _analyze_symbol(
@@ -138,60 +144,88 @@ class RSIMACDKellyStrategy:
         )
     
     def _calculate_rsi(self, prices: List[float], period: int = 14) -> float:
-        """Calculate RSI (Relative Strength Index)"""
+        """Calculate RSI using Wilder's smoothing"""
         if len(prices) < period + 1:
             return 50.0
-        
-        # Calculate price changes
-        deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-        
-        # Get gains and losses
-        gains = [d if d > 0 else 0 for d in deltas[-period:]]
-        losses = [-d if d < 0 else 0 for d in deltas[-period:]]
-        
-        avg_gain = sum(gains) / period
-        avg_loss = sum(losses) / period
-        
+
+        deltas = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
+
+        # Seed with SMA over first `period` deltas
+        gains_seed = [d if d > 0 else 0 for d in deltas[:period]]
+        losses_seed = [-d if d < 0 else 0 for d in deltas[:period]]
+
+        avg_gain = sum(gains_seed) / period
+        avg_loss = sum(losses_seed) / period
+
+        # Wilder's smoothing for remaining deltas
+        for d in deltas[period:]:
+            gain = d if d > 0 else 0
+            loss = -d if d < 0 else 0
+            avg_gain = (avg_gain * (period - 1) + gain) / period
+            avg_loss = (avg_loss * (period - 1) + loss) / period
+
         if avg_loss == 0:
             return 100.0
-        
+
         rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi
+        return 100 - (100 / (1 + rs))
     
     def _calculate_ema(self, prices: List[float], period: int) -> float:
         """Calculate Exponential Moving Average"""
         if len(prices) < period:
             return prices[-1]
-        
-        # Use last 'period' prices
-        data = prices[-period:]
-        
-        # Calculate SMA first
-        sma = sum(data[:period]) / period
-        
-        # Calculate EMA
+
+        # Seed EMA with SMA of first `period` prices
+        sma = sum(prices[:period]) / period
         multiplier = 2 / (period + 1)
         ema = sma
-        
-        for price in data[period:]:
+
+        # Iterate over remaining prices
+        for price in prices[period:]:
             ema = (price - ema) * multiplier + ema
-        
+
         return ema
+
+    def _calculate_ema_series(self, values: List[float], period: int) -> List[float]:
+        """Calculate EMA series (returns list of EMA values from index period-1 onward)"""
+        if len(values) < period:
+            return values[:]
+
+        sma = sum(values[:period]) / period
+        multiplier = 2 / (period + 1)
+        ema_values = [sma]
+
+        for val in values[period:]:
+            ema_values.append((val - ema_values[-1]) * multiplier + ema_values[-1])
+
+        return ema_values
     
     def _calculate_macd(self, prices: List[float]) -> tuple:
         """Calculate MACD (Moving Average Convergence Divergence)"""
-        ema_fast = self._calculate_ema(prices, self.macd_fast)
-        ema_slow = self._calculate_ema(prices, self.macd_slow)
-        
-        macd_line = ema_fast - ema_slow
-        
-        # For signal line, we need MACD history
-        # Simplified: use recent price EMA as proxy
-        signal_line = macd_line * 0.9  # Simplified approximation
+        # Build full EMA series for fast and slow
+        ema_fast_series = self._calculate_ema_series(prices, self.macd_fast)
+        ema_slow_series = self._calculate_ema_series(prices, self.macd_slow)
+
+        # Align: slow series starts at index (macd_slow - 1),
+        # fast series starts at index (macd_fast - 1)
+        offset = self.macd_slow - self.macd_fast
+        macd_series = [
+            ema_fast_series[i + offset] - ema_slow_series[i]
+            for i in range(len(ema_slow_series))
+        ]
+
+        if len(macd_series) < self.macd_signal:
+            # Not enough data — fallback
+            macd_line = macd_series[-1] if macd_series else 0.0
+            return macd_line, macd_line, 0.0
+
+        # Signal line = EMA(9) of MACD series
+        signal_series = self._calculate_ema_series(macd_series, self.macd_signal)
+
+        macd_line = macd_series[-1]
+        signal_line = signal_series[-1]
         histogram = macd_line - signal_line
-        
+
         return macd_line, signal_line, histogram
     
     def _calculate_confidence(

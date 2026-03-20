@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.position_sizer import KellyPositionSizer
 from core.risk_manager import RiskManager
 
-async def test_kelly_sizer():
+def test_kelly_sizer():
     """Test Kelly position sizer"""
     print("\n🧪 Testing Kelly Position Sizer...")
     

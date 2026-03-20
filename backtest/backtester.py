@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.alpaca_client import AlpacaClient
 from core.position_sizer import KellyPositionSizer
-from strategies.rsi_macd_kelly import RSIMACDKellyStrategy
+from strategies._legacy_rsi_macd_kelly import RSIMACDKellyStrategy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

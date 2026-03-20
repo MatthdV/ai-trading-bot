@@ -1,0 +1,34 @@
+{
+  "strategy_name": "MeanReversionFreqtrade",
+  "params": {
+    "roi": {
+      "0": 0.1,
+      "60": 0.05,
+      "120": 0.025
+    },
+    "stoploss": {
+      "stoploss": -0.05
+    },
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": null,
+      "trailing_stop_positive_offset": 0.0,
+      "trailing_only_offset_is_reached": false
+    },
+    "max_open_trades": {
+      "max_open_trades": 5
+    },
+    "buy": {
+      "bb_period": 30,
+      "bb_std": 1.262,
+      "rsi_oversold": 25.329,
+      "rsi_period": 11,
+      "zscore_entry": 1.36
+    },
+    "sell": {
+      "rsi_overbought": 62.835
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-03-20 14:41:55.983964+00:00"
+}

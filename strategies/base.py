@@ -112,7 +112,13 @@ class Position:
     def holding_duration(self, now: Optional[datetime] = None) -> float:
         """Return holding duration in hours."""
         now = now or datetime.utcnow()
-        delta = now - self.entry_time
+        # Align timezone awareness to avoid subtract errors
+        entry = self.entry_time
+        if hasattr(entry, 'tzinfo') and entry.tzinfo is not None and now.tzinfo is None:
+            now = now.replace(tzinfo=entry.tzinfo)
+        elif hasattr(now, 'tzinfo') and now.tzinfo is not None and (not hasattr(entry, 'tzinfo') or entry.tzinfo is None):
+            now = now.replace(tzinfo=None)
+        delta = now - entry
         return delta.total_seconds() / 3600.0
 
     def __repr__(self) -> str:

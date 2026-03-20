@@ -16,10 +16,12 @@ class TelegramNotifier:
     def __init__(self):
         # Get Telegram bot token from environment
         self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        self.chat_id = os.getenv('TELEGRAM_CHAT_ID', '7912122801')
-        
+        self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+
         if not self.bot_token:
             logger.warning("Telegram bot token not found, notifications disabled")
+        elif not self.chat_id:
+            logger.warning("Telegram chat ID not found, notifications disabled")
         else:
             logger.info("Telegram notifier initialized")
     

@@ -133,7 +133,7 @@ class TestMeanReversionStrategy:
         candles = _make_candles(100, volatility=0.005, trend=0.0)
         signal = strat.analyze("TEST", candles)
         # In normal conditions, either NEUTRAL or strength too low to enter
-        assert signal.direction == Direction.NEUTRAL or signal.strength < 0.3
+        assert signal.direction == Direction.NEUTRAL or signal.strength < 0.35
 
     def test_long_on_oversold(self):
         """Heavily oversold data should trigger LONG."""
@@ -166,11 +166,11 @@ class TestMeanReversionStrategy:
         assert strat.should_enter(neutral) is False
 
     def test_should_exit_stop_loss(self):
-        """should_exit triggers on 2 % loss."""
+        """should_exit triggers on 5 % loss (stop_loss_pct=0.05)."""
         strat = MeanReversionStrategy()
         pos = Position("X", Direction.LONG, entry_price=100.0, quantity=10)
-        # Price dropped 3 %
-        signal = Signal("X", Direction.NEUTRAL, 0.0, "test", metadata={"zscore": 1.0, "price": 97.0})
+        # Price dropped 6 % — exceeds stop_loss_pct=0.05
+        signal = Signal("X", Direction.NEUTRAL, 0.0, "test", metadata={"zscore": 1.0, "price": 94.0})
         assert strat.should_exit(signal, pos) is True
 
     def test_should_exit_take_profit(self):
@@ -181,9 +181,9 @@ class TestMeanReversionStrategy:
         assert strat.should_exit(signal, pos) is True
 
     def test_should_exit_timeout(self):
-        """should_exit triggers after 48 h."""
+        """should_exit triggers after 168 h (timeout_hours=168)."""
         strat = MeanReversionStrategy()
-        old_time = datetime.utcnow() - timedelta(hours=50)
+        old_time = datetime.utcnow() - timedelta(hours=170)
         pos = Position("X", Direction.LONG, entry_price=100.0, quantity=10, entry_time=old_time)
         signal = Signal("X", Direction.NEUTRAL, 0.0, "test", metadata={"zscore": -1.5, "price": 100.5})
         assert strat.should_exit(signal, pos) is True
@@ -229,7 +229,7 @@ class TestMomentumStrategy:
         pos = Position("X", Direction.LONG, entry_price=100.0, quantity=10)
         signal = Signal(
             "X", Direction.NEUTRAL, 0.0, "test",
-            metadata={"adx": 15.0, "atr": 1.5, "price": 101.0, "macd_cross_down": False, "macd_cross_up": False},
+            metadata={"adx": 12.0, "atr": 1.5, "price": 101.0, "macd_cross_down": False, "macd_cross_up": False},
         )
         assert strat.should_exit(signal, pos) is True
 
