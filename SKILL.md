@@ -10,7 +10,7 @@ Bot de trading automatisé pour paper trading sur Alpaca avec stratégies IA.
 ## 🎯 Objectifs
 
 - **Phase 1** : Paper trading (3 mois) — Valider stratégie
-- **Phase 2** : Micro-live (€100) — Test exécution réelle  
+- **Phase 2** : Micro-live (€100) — Test exécution réelle
 - **Phase 3** : Scale (€1000) — Objectif 5-10% mensuel
 
 ## 📊 Stratégie Implémentée
