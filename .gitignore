@@ -21,7 +21,11 @@ freqtrade_config/logs/
 freqtrade_config/backtest_results/
 freqtrade_config/hyperopt_results/
 freqtrade_config/*.pid
+freqtrade_config/user_data/
+freqtrade_config/notebooks/
 *.sqlite
+*.sqlite-journal
+*.db
 
 # OS
 .DS_Store
@@ -38,3 +42,9 @@ Thumbs.db
 
 # Claude Code private memory
 .claude/
+
+# Bot state & journals (written by core/state_persistence.py)
+/data/
+trades_journal.jsonl
+bot_state.json
+critical_alerts.jsonl
