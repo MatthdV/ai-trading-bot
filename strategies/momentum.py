@@ -16,8 +16,9 @@ Author: Matthieu de Villele
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timezone, timedelta
+from datetime import datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -26,10 +27,8 @@ from strategies.base import BaseStrategy, Direction, Position, Signal
 
 logger = logging.getLogger(__name__)
 
-# US Eastern timezone offset (UTC-5 standard, UTC-4 DST)
-# For simplicity we use a fixed -4 offset (EDT) which covers the majority
-# of the trading year.  A production system should use ``zoneinfo``.
-_ET = timezone(timedelta(hours=-4))
+# US Eastern timezone — handles EDT/EST transitions automatically
+_ET = ZoneInfo("America/New_York")
 _MARKET_OPEN = time(9, 30)
 _MARKET_CLOSE = time(16, 0)
 
