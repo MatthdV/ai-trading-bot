@@ -29,8 +29,7 @@ mkdir -p "$LOGS_DIR"
 export FREQTRADE__exchange__key="$BINANCE_TESTNET_KEY"
 export FREQTRADE__exchange__secret="$BINANCE_TESTNET_SECRET"
 export FREQTRADE__telegram__token="$TELEGRAM_BOT_TOKEN"
-# chat_id doit être une string JSON (guillemets littéraux pour éviter la conversion en int)
-export FREQTRADE__telegram__chat_id="\"$TELEGRAM_CHAT_ID\""
+export FREQTRADE__telegram__chat_id="$TELEGRAM_CHAT_ID"
 
 MODE="${1:-both}"
 
