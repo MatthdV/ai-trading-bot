@@ -7,6 +7,7 @@ Uses requests with connection pooling, timeout, and caching.
 
 import os
 import json
+import random
 import time
 import logging
 from typing import Optional, Dict, List, Any
@@ -17,6 +18,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 10  # seconds
+MAX_RETRIES = 3
+RETRYABLE_STATUS_CODES = {429, 503}
 
 
 class _BarCache:
@@ -73,7 +76,7 @@ class AlpacaClient:
         params: Optional[Dict] = None,
         data: Optional[Dict] = None,
     ) -> Any:
-        """Make authenticated request to Alpaca API"""
+        """Make authenticated request to Alpaca API with retry + backoff."""
         url = f"{self.base_url}/{endpoint}"
 
         kwargs: Dict[str, Any] = {'timeout': REQUEST_TIMEOUT}
@@ -82,23 +85,66 @@ class AlpacaClient:
         if data and method in ('POST', 'PUT'):
             kwargs['json'] = data
 
-        try:
-            resp = self._session.request(method, url, **kwargs)
-            resp.raise_for_status()
-            return resp.json() if resp.content else None
-        except requests.exceptions.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else 0
-            body = exc.response.text if exc.response is not None else ''
-            logger.error(f"API error {status}: {body}")
-            if status == 404:
-                return None
-            raise
-        except requests.exceptions.Timeout:
-            logger.error(f"Request timeout ({REQUEST_TIMEOUT}s): {method} {endpoint}")
-            raise
-        except requests.exceptions.ConnectionError as exc:
-            logger.error(f"Connection error: {exc}")
-            raise
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = self._session.request(method, url, **kwargs)
+
+                # Retryable HTTP status
+                if resp.status_code in RETRYABLE_STATUS_CODES:
+                    # B9: RFC 7231 allows Retry-After to be either an
+                    # integer (seconds) or an HTTP-date. `int(...)` crashes
+                    # on HTTP-date, taking down the bot on a transient 503.
+                    # Fall back to exponential backoff on unparseable values.
+                    retry_after_hdr = resp.headers.get('Retry-After', '')
+                    try:
+                        retry_after = int(retry_after_hdr)
+                    except (ValueError, TypeError):
+                        retry_after = 2 ** attempt
+                    wait = retry_after + random.uniform(0, 1)
+                    # B9 bonus: surface the first 200 chars of the response
+                    # body so 429/503 incidents are debuggable.
+                    body_preview = (resp.text or '')[:200]
+                    logger.warning(
+                        f"HTTP {resp.status_code} on {method} {endpoint} "
+                        f"(attempt {attempt + 1}/{MAX_RETRIES}), "
+                        f"retry in {wait:.1f}s | body={body_preview!r}"
+                    )
+                    time.sleep(wait)
+                    continue
+
+                resp.raise_for_status()
+                return resp.json() if resp.content else None
+
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                body = exc.response.text if exc.response is not None else ''
+                logger.error(f"API error {status}: {body}")
+                if status == 404:
+                    return None
+                raise
+
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                last_exc = exc
+                if attempt == MAX_RETRIES - 1:
+                    logger.error(f"{type(exc).__name__} after {MAX_RETRIES} attempts: {method} {endpoint}")
+                    raise
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(
+                    f"{type(exc).__name__} on {method} {endpoint} "
+                    f"(attempt {attempt + 1}/{MAX_RETRIES}), retry in {wait:.1f}s"
+                )
+                time.sleep(wait)
+
+        # Should not reach here, but just in case
+        if last_exc:
+            raise last_exc
+        raise RuntimeError(f"Exhausted {MAX_RETRIES} retries for {method} {endpoint}")
+
+    def close(self) -> None:
+        """Close the underlying HTTP session."""
+        self._session.close()
 
     # ------------------------------------------------------------------
     # Account & positions
