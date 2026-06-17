@@ -1,72 +1,169 @@
 #!/usr/bin/env python3
 """
-Alpaca API Client (using standard library only)
+Alpaca API Client
 Handles all interactions with Alpaca Markets API
+Uses requests with connection pooling, timeout, and caching.
 """
 
 import os
 import json
-import urllib.request
-import urllib.error
+import random
+import time
 import logging
 from typing import Optional, Dict, List, Any
 
+import pandas as pd
+import requests
+
 logger = logging.getLogger(__name__)
+
+REQUEST_TIMEOUT = 10  # seconds
+MAX_RETRIES = 3
+RETRYABLE_STATUS_CODES = {429, 503}
+
+
+class _BarCache:
+    """Simple in-memory cache with TTL for bar data."""
+
+    def __init__(self, ttl: int = 60):
+        self._ttl = ttl
+        self._store: Dict[str, tuple] = {}  # key → (timestamp, data)
+
+    def get(self, key: str) -> Optional[List[Dict[str, Any]]]:
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        ts, data = entry
+        if time.monotonic() - ts > self._ttl:
+            del self._store[key]
+            return None
+        return data
+
+    def set(self, key: str, data: List[Dict[str, Any]]) -> None:
+        self._store[key] = (time.monotonic(), data)
+
 
 class AlpacaClient:
     """Alpaca API client for trading operations"""
-    
+
     def __init__(self):
         self.api_key = os.getenv('ALPACA_API_KEY')
         self.secret_key = os.getenv('ALPACA_SECRET_KEY')
         self.base_url = os.getenv('ALPACA_BASE_URL', 'https://paper-api.alpaca.markets/v2')
-        
+
         if not self.api_key or not self.secret_key:
             raise ValueError("Alpaca API credentials not found in environment")
-        
+
+        self._session = requests.Session()
+        self._session.headers.update({
+            'APCA-API-KEY-ID': self.api_key,
+            'APCA-API-SECRET-KEY': self.secret_key,
+            'Content-Type': 'application/json',
+        })
+
+        self._bar_cache = _BarCache(ttl=60)
+
         logger.info(f"Alpaca client initialized: {self.base_url}")
-    
-    def _request(self, method: str, endpoint: str, params: Optional[Dict] = None, data: Optional[Dict] = None) -> Any:
-        """Make authenticated request to Alpaca API"""
+
+    # ------------------------------------------------------------------
+    # Internal request helper
+    # ------------------------------------------------------------------
+
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        data: Optional[Dict] = None,
+    ) -> Any:
+        """Make authenticated request to Alpaca API with retry + backoff."""
         url = f"{self.base_url}/{endpoint}"
-        
-        # Add query params
+
+        kwargs: Dict[str, Any] = {'timeout': REQUEST_TIMEOUT}
         if params:
-            query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
-            url = f"{url}?{query_string}"
-        
-        # Create request
-        req = urllib.request.Request(url, method=method)
-        req.add_header('APCA-API-KEY-ID', self.api_key)
-        req.add_header('APCA-API-SECRET-KEY', self.secret_key)
-        req.add_header('Content-Type', 'application/json')
-        
-        # Add body for POST/PUT
-        if data and method in ['POST', 'PUT']:
-            req.data = json.dumps(data).encode('utf-8')
-        
-        try:
-            with urllib.request.urlopen(req) as response:
-                return json.loads(response.read().decode('utf-8'))
-        except urllib.error.HTTPError as e:
-            logger.error(f"API error {e.code}: {e.read().decode('utf-8')}")
-            if e.code == 404:
-                return None
-            raise
-    
+            kwargs['params'] = params
+        if data and method in ('POST', 'PUT'):
+            kwargs['json'] = data
+
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = self._session.request(method, url, **kwargs)
+
+                # Retryable HTTP status
+                if resp.status_code in RETRYABLE_STATUS_CODES:
+                    # B9: RFC 7231 allows Retry-After to be either an
+                    # integer (seconds) or an HTTP-date. `int(...)` crashes
+                    # on HTTP-date, taking down the bot on a transient 503.
+                    # Fall back to exponential backoff on unparseable values.
+                    retry_after_hdr = resp.headers.get('Retry-After', '')
+                    try:
+                        retry_after = int(retry_after_hdr)
+                    except (ValueError, TypeError):
+                        retry_after = 2 ** attempt
+                    wait = retry_after + random.uniform(0, 1)
+                    # B9 bonus: surface the first 200 chars of the response
+                    # body so 429/503 incidents are debuggable.
+                    body_preview = (resp.text or '')[:200]
+                    logger.warning(
+                        f"HTTP {resp.status_code} on {method} {endpoint} "
+                        f"(attempt {attempt + 1}/{MAX_RETRIES}), "
+                        f"retry in {wait:.1f}s | body={body_preview!r}"
+                    )
+                    time.sleep(wait)
+                    continue
+
+                resp.raise_for_status()
+                return resp.json() if resp.content else None
+
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                body = exc.response.text if exc.response is not None else ''
+                logger.error(f"API error {status}: {body}")
+                if status == 404:
+                    return None
+                raise
+
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                last_exc = exc
+                if attempt == MAX_RETRIES - 1:
+                    logger.error(f"{type(exc).__name__} after {MAX_RETRIES} attempts: {method} {endpoint}")
+                    raise
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(
+                    f"{type(exc).__name__} on {method} {endpoint} "
+                    f"(attempt {attempt + 1}/{MAX_RETRIES}), retry in {wait:.1f}s"
+                )
+                time.sleep(wait)
+
+        # Should not reach here, but just in case
+        if last_exc:
+            raise last_exc
+        raise RuntimeError(f"Exhausted {MAX_RETRIES} retries for {method} {endpoint}")
+
+    def close(self) -> None:
+        """Close the underlying HTTP session."""
+        self._session.close()
+
+    # ------------------------------------------------------------------
+    # Account & positions
+    # ------------------------------------------------------------------
+
     def get_account(self) -> Dict[str, Any]:
-        """Get account information"""
         return self._request('GET', 'account')
-    
+
     def get_positions(self) -> List[Dict[str, Any]]:
-        """Get all open positions"""
         result = self._request('GET', 'positions')
         return result if result else []
-    
+
     def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Get position for specific symbol"""
         return self._request('GET', f'positions/{symbol}')
-    
+
+    # ------------------------------------------------------------------
+    # Orders
+    # ------------------------------------------------------------------
+
     def submit_order(
         self,
         symbol: str,
@@ -75,77 +172,132 @@ class AlpacaClient:
         type: str = 'market',
         time_in_force: str = 'day',
         limit_price: Optional[float] = None,
-        stop_price: Optional[float] = None
+        stop_price: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Submit a new order"""
-        data = {
+        data: Dict[str, Any] = {
             'symbol': symbol,
             'qty': str(qty),
             'side': side,
             'type': type,
-            'time_in_force': time_in_force
+            'time_in_force': time_in_force,
         }
-        
         if limit_price:
             data['limit_price'] = str(limit_price)
         if stop_price:
             data['stop_price'] = str(stop_price)
-        
+
         return self._request('POST', 'orders', data=data)
-    
+
     def get_orders(self, status: str = 'open') -> List[Dict[str, Any]]:
-        """Get orders"""
         result = self._request('GET', 'orders', params={'status': status})
         return result if result else []
-    
+
     def cancel_order(self, order_id: str) -> None:
-        """Cancel an order"""
         self._request('DELETE', f'orders/{order_id}')
-    
+
+    # ------------------------------------------------------------------
+    # Market data
+    # ------------------------------------------------------------------
+
     def get_bars(
         self,
         symbol: str,
         timeframe: str = '1D',
         limit: int = 100,
         start: Optional[str] = None,
-        end: Optional[str] = None
+        end: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Get historical price bars"""
-        params = {
+        cache_key = f"{symbol}:{timeframe}:{limit}:{start}:{end}"
+        cached = self._bar_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        params: Dict[str, str] = {
             'symbols': symbol,
             'timeframe': timeframe,
-            'limit': str(limit)
+            'limit': str(limit),
         }
         if start:
             params['start'] = start
         if end:
             params['end'] = end
-        
+
         response = self._request('GET', 'stocks/bars', params=params)
-        if response and 'bars' in response:
-            return response['bars'].get(symbol, [])
-        return []
-    
+        bars = response['bars'].get(symbol, []) if response and 'bars' in response else []
+
+        self._bar_cache.set(cache_key, bars)
+        return bars
+
+    def get_ohlcv_dataframe(
+        self,
+        symbol: str,
+        timeframe: str = '1D',
+        limit: int = 100,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Return OHLCV data as a DataFrame with DatetimeIndex.
+
+        Compatible with ``BaseStrategy.analyze()``: columns are
+        ``open``, ``high``, ``low``, ``close``, ``volume``.
+        """
+        bars = self.get_bars(symbol, timeframe=timeframe, limit=limit, start=start, end=end)
+        if not bars:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        df = pd.DataFrame(bars)
+
+        # Alpaca v2 bars use short keys (t/o/h/l/c/v)
+        rename_map: Dict[str, str] = {}
+        if "t" in df.columns:
+            rename_map["t"] = "timestamp"
+        if "o" in df.columns:
+            rename_map["o"] = "open"
+        if "h" in df.columns:
+            rename_map["h"] = "high"
+        if "l" in df.columns:
+            rename_map["l"] = "low"
+        if "c" in df.columns:
+            rename_map["c"] = "close"
+        if "v" in df.columns:
+            rename_map["v"] = "volume"
+        if rename_map:
+            df = df.rename(columns=rename_map)
+
+        # Build DatetimeIndex
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+            df = df.set_index("timestamp").sort_index()
+
+        # Keep only OHLCV columns
+        ohlcv_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+        df = df[ohlcv_cols]
+
+        # Ensure numeric types
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        return df
+
     def get_latest_quote(self, symbol: str) -> Dict[str, Any]:
-        """Get latest quote for symbol"""
         response = self._request('GET', f'stocks/{symbol}/quotes/latest')
         return response.get('quote', {}) if response else {}
-    
+
     def get_latest_trade(self, symbol: str) -> Dict[str, Any]:
-        """Get latest trade for symbol"""
         response = self._request('GET', f'stocks/{symbol}/trades/latest')
         return response.get('trade', {}) if response else {}
-    
+
+    # ------------------------------------------------------------------
+    # Market status
+    # ------------------------------------------------------------------
+
     def is_market_open(self) -> bool:
-        """Check if market is currently open"""
         clock = self._request('GET', 'clock')
         return clock.get('is_open', False) if clock else False
-    
+
     def get_clock(self) -> Dict[str, Any]:
-        """Get market clock"""
         return self._request('GET', 'clock') or {}
-    
+
     def get_assets(self, status: str = 'active') -> List[Dict[str, Any]]:
-        """Get list of tradable assets"""
         result = self._request('GET', 'assets', params={'status': status})
         return result if result else []

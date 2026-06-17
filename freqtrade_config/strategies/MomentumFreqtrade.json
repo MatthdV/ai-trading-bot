@@ -1,0 +1,31 @@
+{
+  "strategy_name": "MomentumFreqtrade",
+  "params": {
+    "roi": {
+      "0": 0.1,
+      "60": 0.05,
+      "120": 0.025
+    },
+    "stoploss": {
+      "stoploss": -0.05
+    },
+    "trailing": {
+      "trailing_stop": true,
+      "trailing_stop_positive": 0.01,
+      "trailing_stop_positive_offset": 0.02,
+      "trailing_only_offset_is_reached": true
+    },
+    "max_open_trades": {
+      "max_open_trades": 5
+    },
+    "buy": {
+      "adx_entry": 20.74,
+      "volume_min": 1.971
+    },
+    "sell": {
+      "adx_exit": 18.725
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-03-20 14:49:03.524505+00:00"
+}

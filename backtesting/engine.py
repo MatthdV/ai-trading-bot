@@ -119,6 +119,12 @@ class Backtester:
             logger.warning("No data after date filtering")
             return
 
+        # Validate required columns
+        required_cols = {"open", "high", "low", "close", "volume"}
+        missing = required_cols - set(df.columns)
+        if missing:
+            raise ValueError(f"Missing required columns: {missing}")
+
         # Detect multi-asset vs single-asset
         symbols = df["symbol"].unique().tolist() if "symbol" in df.columns else ["UNKNOWN"]
         is_multi = "symbol" in df.columns
@@ -150,22 +156,22 @@ class Backtester:
                 for strategy in self.strategies:
                     signal = strategy.analyze(sym, sym_candles)
 
-                    pos_key = f"{sym}_{strategy.name}"
+                    pos_key = f"{sym}::{strategy.name}"
 
                     # --- Check exits first ---
                     if pos_key in self._positions:
                         pos = self._positions[pos_key]
                         if strategy.should_exit(signal, pos):
                             self._close_position(pos_key, current_price, current_date, "strategy_exit")
-                        # Also check hard stop / take-profit from Position itself
+                        # Hard stop / take-profit — fill at current_price (simulates market fill after trigger)
                         elif pos.stop_loss and current_price <= pos.stop_loss and pos.is_long:
-                            self._close_position(pos_key, pos.stop_loss, current_date, "stop_loss")
+                            self._close_position(pos_key, current_price, current_date, "stop_loss")
                         elif pos.take_profit and current_price >= pos.take_profit and pos.is_long:
-                            self._close_position(pos_key, pos.take_profit, current_date, "take_profit")
+                            self._close_position(pos_key, current_price, current_date, "take_profit")
                         elif pos.stop_loss and current_price >= pos.stop_loss and not pos.is_long:
-                            self._close_position(pos_key, pos.stop_loss, current_date, "stop_loss")
+                            self._close_position(pos_key, current_price, current_date, "stop_loss")
                         elif pos.take_profit and current_price <= pos.take_profit and not pos.is_long:
-                            self._close_position(pos_key, pos.take_profit, current_date, "take_profit")
+                            self._close_position(pos_key, current_price, current_date, "take_profit")
 
                     # --- Check entries ---
                     elif strategy.should_enter(signal):
@@ -394,7 +400,7 @@ class Backtester:
             pnl_pct=pnl_pct,
             commission=commission * 2,  # entry + exit
             slippage=abs(fill_price - price) * pos.quantity,
-            strategy_name=pos_key.split("_", 1)[1] if "_" in pos_key else "",
+            strategy_name=pos_key.split("::", 1)[1] if "::" in pos_key else "",
             exit_reason=reason,
         )
         self._trades.append(trade)

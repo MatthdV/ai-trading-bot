@@ -12,6 +12,11 @@ yfinance>=0.2.30
 pytest>=7.0
 pytest-asyncio>=0.21
 
-# Existing bot dependencies (Alpaca via stdlib urllib — no extra package needed)
+# HTTP client (replaces stdlib urllib)
+requests>=2.31
+
 # Redis (optional, for live bot state persistence)
 # redis>=5.0
+
+# Crypto trading (Freqtrade)
+freqtrade>=2024.1

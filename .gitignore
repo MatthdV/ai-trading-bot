@@ -1,0 +1,50 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+*.pid
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Freqtrade
+freqtrade_config/data/
+freqtrade_config/logs/
+freqtrade_config/backtest_results/
+freqtrade_config/hyperopt_results/
+freqtrade_config/*.pid
+freqtrade_config/user_data/
+freqtrade_config/notebooks/
+*.sqlite
+*.sqlite-journal
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Freqtrade databases
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Claude Code private memory
+.claude/
+
+# Bot state & journals (written by core/state_persistence.py)
+/data/
+trades_journal.jsonl
+bot_state.json
+critical_alerts.jsonl

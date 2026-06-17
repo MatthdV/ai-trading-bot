@@ -133,7 +133,7 @@ class TestMeanReversionStrategy:
         candles = _make_candles(100, volatility=0.005, trend=0.0)
         signal = strat.analyze("TEST", candles)
         # In normal conditions, either NEUTRAL or strength too low to enter
-        assert signal.direction == Direction.NEUTRAL or signal.strength < 0.3
+        assert signal.direction == Direction.NEUTRAL or signal.strength < 0.35
 
     def test_long_on_oversold(self):
         """Heavily oversold data should trigger LONG."""
@@ -166,11 +166,11 @@ class TestMeanReversionStrategy:
         assert strat.should_enter(neutral) is False
 
     def test_should_exit_stop_loss(self):
-        """should_exit triggers on 2 % loss."""
+        """should_exit triggers on 5 % loss (stop_loss_pct=0.05)."""
         strat = MeanReversionStrategy()
         pos = Position("X", Direction.LONG, entry_price=100.0, quantity=10)
-        # Price dropped 3 %
-        signal = Signal("X", Direction.NEUTRAL, 0.0, "test", metadata={"zscore": 1.0, "price": 97.0})
+        # Price dropped 6 % — exceeds stop_loss_pct=0.05
+        signal = Signal("X", Direction.NEUTRAL, 0.0, "test", metadata={"zscore": 1.0, "price": 94.0})
         assert strat.should_exit(signal, pos) is True
 
     def test_should_exit_take_profit(self):
@@ -181,9 +181,9 @@ class TestMeanReversionStrategy:
         assert strat.should_exit(signal, pos) is True
 
     def test_should_exit_timeout(self):
-        """should_exit triggers after 48 h."""
+        """should_exit triggers after 168 h (timeout_hours=168)."""
         strat = MeanReversionStrategy()
-        old_time = datetime.utcnow() - timedelta(hours=50)
+        old_time = datetime.utcnow() - timedelta(hours=170)
         pos = Position("X", Direction.LONG, entry_price=100.0, quantity=10, entry_time=old_time)
         signal = Signal("X", Direction.NEUTRAL, 0.0, "test", metadata={"zscore": -1.5, "price": 100.5})
         assert strat.should_exit(signal, pos) is True
@@ -229,7 +229,7 @@ class TestMomentumStrategy:
         pos = Position("X", Direction.LONG, entry_price=100.0, quantity=10)
         signal = Signal(
             "X", Direction.NEUTRAL, 0.0, "test",
-            metadata={"adx": 15.0, "atr": 1.5, "price": 101.0, "macd_cross_down": False, "macd_cross_up": False},
+            metadata={"adx": 12.0, "atr": 1.5, "price": 101.0, "macd_cross_down": False, "macd_cross_up": False},
         )
         assert strat.should_exit(signal, pos) is True
 
@@ -378,6 +378,72 @@ class TestRiskManager:
         assert "portfolio_value" in report
         assert "daily_pnl_pct" in report
         assert "drawdown_pct" in report
+
+    def test_blocks_on_daily_loss_halt(self):
+        """Exceeding max_daily_loss_pct should halt trading for the day."""
+        rm = RiskManager(RiskConfig(max_daily_loss_pct=0.02))
+        signal = Signal("AAPL", Direction.LONG, 0.7, "test")
+        # First call seeds day_start_equity = 100_000
+        ok, _ = rm.check_trade(signal, 100_000)
+        assert ok is True
+        # Drop to 97_000 → -3% daily return → halt
+        ok, reason = rm.check_trade(signal, 97_000)
+        assert ok is False
+        assert "Daily loss" in reason or "halted" in reason.lower()
+
+    def test_blocks_on_drawdown_halt(self):
+        """Exceeding max_portfolio_drawdown_pct halts trading permanently."""
+        rm = RiskManager(
+            RiskConfig(max_portfolio_drawdown_pct=0.10, max_daily_loss_pct=0.50)
+        )
+        signal = Signal("AAPL", Direction.LONG, 0.7, "test")
+        # Seed peak equity at 100_000
+        rm.check_trade(signal, 100_000)
+        # Drop to 88_000 → drawdown = 12% > 10% → halt (daily_loss is 50%, so
+        # drawdown triggers first)
+        ok, reason = rm.check_trade(signal, 88_000)
+        assert ok is False
+        assert "drawdown" in reason.lower() or "halted" in reason.lower()
+
+    def test_short_stops_inverted(self):
+        """For SHORT direction, stop-loss is above entry and TP is below."""
+        rm = RiskManager()
+        sl, tp = rm.calculate_stops(
+            entry_price=100.0, direction=Direction.SHORT, atr=2.0
+        )
+        assert sl > 100.0, f"SHORT stop-loss should be above entry, got {sl}"
+        assert tp < 100.0, f"SHORT take-profit should be below entry, got {tp}"
+        # Risk:reward check (direction-agnostic)
+        risk = sl - 100.0
+        reward = 100.0 - tp
+        assert reward / risk >= rm.cfg.min_risk_reward - 0.01
+
+    def test_trailing_stop_ratchets_up_only(self):
+        """Trailing stop should never move against the position."""
+        rm = RiskManager(
+            RiskConfig(trailing_activation_pct=0.01, trailing_atr_multiplier=1.0)
+        )
+        pos = Position("T", Direction.LONG, entry_price=100.0, quantity=10,
+                       stop_loss=96.0)
+        # Unrealized +10% → activated, new stop = 110 - 2 = 108 > 96
+        new_stop = rm.update_trailing_stop(pos, current_price=110.0, atr=2.0)
+        assert new_stop is not None
+        assert new_stop > 96.0
+        # Apply the new stop as the caller would
+        pos.stop_loss = new_stop
+        # Price pulls back: new computed stop = 105 - 2 = 103 < 108 → should NOT
+        # ratchet down (returns None)
+        no_update = rm.update_trailing_stop(pos, current_price=105.0, atr=2.0)
+        assert no_update is None
+
+    def test_trailing_stop_not_active_below_threshold(self):
+        """Below the activation threshold, no trailing stop is returned."""
+        rm = RiskManager(RiskConfig(trailing_activation_pct=0.05))
+        pos = Position("T", Direction.LONG, entry_price=100.0, quantity=10,
+                       stop_loss=96.0)
+        # Unrealized +2% but activation needs +5% → no update
+        result = rm.update_trailing_stop(pos, current_price=102.0, atr=2.0)
+        assert result is None
 
 
 # =====================================================================

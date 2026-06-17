@@ -1,0 +1,62 @@
+# Freqtrade dry-run / live compose — hardened for VPS deploy.
+#
+# Structure:
+#   freqtrade_config/ is mounted RW (needs to write logs/, data/, sqlite DB).
+#   freqtrade_config/strategies/ is nested mounted RO (code, defense in depth).
+#   Config JSONs are mounted RO individually (nobody should mutate them at runtime).
+#
+# Security baseline: read-only root fs, dropped Linux capabilities, no privilege
+# escalation, capped RAM/PIDs, unprivileged UID. tmpfs for /tmp is mandatory
+# because read_only root blocks pandas/pip temp writes.
+
+x-freqtrade-hardening: &freqtrade-hardening
+  image: freqtradeorg/freqtrade:stable
+  restart: unless-stopped
+  user: "1000:1000"
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  mem_limit: 2g
+  pids_limit: 256
+  tmpfs:
+    - /tmp
+
+services:
+  freqtrade-funding:
+    <<: *freqtrade-hardening
+    container_name: freqtrade-funding
+    volumes:
+      # Parent dir RW (logs, data, sqlite DB, pairlist cache)
+      - ./freqtrade_config:/freqtrade/freqtrade_config:rw
+      # Strategies overlaid RO (nested mount wins over parent rw at this path)
+      - ./freqtrade_config/strategies:/freqtrade/freqtrade_config/strategies:ro
+      # Config JSON pinned RO
+      - ./freqtrade_config/config_futures.json:/freqtrade/freqtrade_config/config_futures.json:ro
+    environment:
+      - FREQTRADE__exchange__key=${BINANCE_API_KEY}
+      - FREQTRADE__exchange__secret=${BINANCE_API_SECRET}
+      - FREQTRADE__telegram__token=${TELEGRAM_BOT_TOKEN}
+    command: >
+      trade
+      --config freqtrade_config/config_futures.json
+      --strategy FundingRateArbitrage
+      --logfile freqtrade_config/logs/freqtrade_futures.log
+
+  freqtrade-breakout:
+    <<: *freqtrade-hardening
+    container_name: freqtrade-breakout
+    volumes:
+      - ./freqtrade_config:/freqtrade/freqtrade_config:rw
+      - ./freqtrade_config/strategies:/freqtrade/freqtrade_config/strategies:ro
+      - ./freqtrade_config/config_breakout.json:/freqtrade/freqtrade_config/config_breakout.json:ro
+    environment:
+      - FREQTRADE__exchange__key=${BINANCE_API_KEY}
+      - FREQTRADE__exchange__secret=${BINANCE_API_SECRET}
+      - FREQTRADE__telegram__token=${TELEGRAM_BOT_TOKEN}
+    command: >
+      trade
+      --config freqtrade_config/config_breakout.json
+      --strategy BreakoutTrendFollowing
+      --logfile freqtrade_config/logs/freqtrade.log
